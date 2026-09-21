@@ -1,9 +1,16 @@
 # Built In 8
 
-A single-page training and nutrition tracker for an 8-week block. No build step, no
-dependencies, no backend of its own — open `index.html` and it runs.
+A training and nutrition tracker for an 8-week block, in two clients:
 
-The app renders five tabs from one in-memory store:
+- **Web** (repo root) — a single page with no build step, no dependencies and no backend
+  of its own. Open `index.html` and it runs. Documented below.
+- **Mobile** ([mobile/](mobile/)) — an Expo / React Native app sharing the same plan data
+  and persisted shape. Today is complete; the other four tabs are placeholders. See
+  [mobile/README.md](mobile/README.md).
+
+## The web app
+
+It renders five tabs from one in-memory store:
 
 | Tab | What it does |
 | --- | --- |
