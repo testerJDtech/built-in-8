@@ -11,6 +11,16 @@ export const DEFAULT_SETTINGS: Settings = {
   showFat: true,
 };
 
+/** Offered when a session is marked not done. Free text is allowed too. */
+export const MISS_REASONS = [
+  "No time",
+  "Too tired",
+  "Unwell or sore",
+  "Away from home",
+  "Work ran over",
+  "Chose not to",
+];
+
 /** Week 1 exactly as written in the plan. Later weeks are added by the user. */
 export function week1(): Week {
   return {

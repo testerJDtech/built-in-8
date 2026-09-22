@@ -18,6 +18,8 @@ import type {
   Food,
   FoodEntry,
   MealKey,
+  SessionLog,
+  SessionStatus,
   Store,
   Workout,
 } from './types';
@@ -189,11 +191,42 @@ export function removeEntry(date: string, entryId: string): void {
 
 // ------------------------------------------------------------- day-level edits
 
-export function toggleSessionDone(date: string, wid: string): void {
+export function ensureSession(date: string, wid: string): SessionLog {
   const d = day(date);
-  if (!d.sessions[wid]) d.sessions[wid] = { done: false, log: {}, note: '' };
-  d.sessions[wid].done = !d.sessions[wid].done;
+  if (!d.sessions[wid])
+    d.sessions[wid] = { done: false, status: '', missReason: '', log: {}, note: '' };
+  const sess = d.sessions[wid];
+  if (sess.status === undefined) sess.status = sess.done ? 'done' : '';
+  if (sess.missReason === undefined) sess.missReason = '';
+  return sess;
+}
+
+/**
+ * Answer a session either way. Tapping the answer it already has clears it,
+ * so a wrong tap is undone by the same button. Returns what it settled on.
+ */
+export function setSessionStatus(
+  date: string,
+  wid: string,
+  status: 'done' | 'missed',
+): SessionStatus {
+  const sess = ensureSession(date, wid);
+  const next: SessionStatus = sess.status === status ? '' : status;
+  sess.done = next === 'done';
+  sess.status = next;
+  if (next !== 'missed') sess.missReason = '';
   touchDay(date);
+  return next;
+}
+
+export function setMissReason(date: string, wid: string, reason: string): void {
+  const sess = ensureSession(date, wid);
+  sess.missReason = reason;
+  touchDay(date);
+}
+
+export function toggleSessionDone(date: string, wid: string): void {
+  setSessionStatus(date, wid, 'done');
 }
 
 export function toggleMealEaten(date: string, key: MealKey): void {

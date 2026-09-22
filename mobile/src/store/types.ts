@@ -78,8 +78,17 @@ export interface FoodEntry {
   at: number;
 }
 
+/**
+ * A session is one of three things: done, deliberately not done, or simply
+ * not answered yet. `done` stays for logs written before `status` existed.
+ */
+export type SessionStatus = '' | 'done' | 'missed';
+
 export interface SessionLog {
   done: boolean;
+  status?: SessionStatus;
+  /** why it didn't happen, when status is 'missed' — optional */
+  missReason?: string;
   log: Record<string, string>;
   note: string;
 }

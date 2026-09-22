@@ -233,7 +233,7 @@ export function MeterGrid({ children }: { children: ReactNode }) {
 
 // -------------------------------------------------------------- controls
 
-type BtnTone = 'outline' | 'red' | 'solid' | 'ghost';
+type BtnTone = 'outline' | 'red' | 'solid' | 'ghost' | 'warn';
 
 export function Btn({
   label,
@@ -250,11 +250,25 @@ export function Btn({
 }) {
   const { c, radius } = useTheme();
   const bg =
-    tone === 'red' ? c.red : tone === 'solid' ? c.ink : 'transparent';
+    tone === 'red' ? c.red : tone === 'warn' ? c.warn : tone === 'solid' ? c.ink : 'transparent';
   const fg =
-    tone === 'red' ? c.onred : tone === 'solid' ? c.bg : tone === 'ghost' ? c.ink2 : c.ink;
+    tone === 'red' || tone === 'warn'
+      ? c.onred
+      : tone === 'solid'
+        ? c.bg
+        : tone === 'ghost'
+          ? c.ink2
+          : c.ink;
   const border =
-    tone === 'red' ? c.red : tone === 'solid' ? c.ink : tone === 'ghost' ? c.line : c.ink;
+    tone === 'red'
+      ? c.red
+      : tone === 'warn'
+        ? c.warn
+        : tone === 'solid'
+          ? c.ink
+          : tone === 'ghost'
+            ? c.line
+            : c.ink;
 
   return (
     <Pressable
@@ -284,28 +298,55 @@ export function Chip({
   label,
   onPress,
   ghost,
+  on,
 }: {
   label: string;
   onPress: () => void;
   ghost?: boolean;
+  /** selected — used where chips act as a single choice, e.g. a miss reason */
+  on?: boolean;
 }) {
   const { c } = useTheme();
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ selected: !!on }}
       onPress={onPress}
       style={({ pressed }) => ({
         borderWidth: StyleSheet.hairlineWidth * 2,
-        borderColor: ghost ? c.ink2 : c.line,
-        backgroundColor: ghost ? 'transparent' : c.surface2,
+        borderColor: on ? c.red : ghost ? c.ink2 : c.line,
+        backgroundColor: on ? c.red : ghost ? 'transparent' : c.surface2,
         borderRadius: 999,
         paddingVertical: 7,
         paddingHorizontal: 12,
         opacity: pressed ? 0.7 : 1,
       })}
     >
-      <Text style={{ fontSize: 13, fontWeight: '600', color: c.ink }}>{label}</Text>
+      <Text style={{ fontSize: 13, fontWeight: '600', color: on ? c.onred : c.ink }}>
+        {label}
+      </Text>
     </Pressable>
+  );
+}
+
+/** DONE / NOT DONE badge against a session. */
+export function StatBadge({ status }: { status: 'done' | 'missed' }) {
+  const { c, radius } = useTheme();
+  const col = status === 'done' ? c.good : c.warn;
+  return (
+    <View
+      style={{
+        borderWidth: StyleSheet.hairlineWidth * 2,
+        borderColor: col,
+        borderRadius: radius.control,
+        paddingVertical: 3,
+        paddingHorizontal: 7,
+      }}
+    >
+      <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.3, color: col }}>
+        {status === 'done' ? 'DONE' : 'NOT DONE'}
+      </Text>
+    </View>
   );
 }
 

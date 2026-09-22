@@ -446,6 +446,27 @@ function sessionDone(date, wid){
   var d = S.days[date];
   return !!(d && d.sessions && d.sessions[wid] && d.sessions[wid].done);
 }
+/* A session is one of three things: done, deliberately not done ("missed"),
+   or simply not answered yet. The third is silence, not a failure. */
+function sessionMissed(date, wid){
+  var d = S.days[date];
+  return !!(d && d.sessions && d.sessions[wid] && !d.sessions[wid].done
+            && d.sessions[wid].status === "missed");
+}
+function sessionStatus(date, wid){
+  if(sessionDone(date, wid)) return "done";
+  if(sessionMissed(date, wid)) return "missed";
+  return "";
+}
+function setSessionStatus(date, wid, status){
+  var sess = ensureSession(date, wid);
+  if(sessionStatus(date, wid) === status) status = "";   // tapping the same answer clears it
+  sess.done = status === "done";
+  sess.status = status;
+  if(status !== "missed") sess.missReason = "";
+  touchDay(date);
+  return status;
+}
 function weekSessionCount(w){
   var n = 0;
   w.days.forEach(function(dp){
@@ -462,18 +483,63 @@ function weekCardioCount(w){
   });
   return n;
 }
+function weekMissedCount(w){
+  var n = 0;
+  w.days.forEach(function(dp){
+    if(dp.wid === "rest") return;
+    if(sessionMissed(dp.date, dp.wid)) n++;
+  });
+  return n;
+}
+/* Planned sessions with no answer at all, and only for days already gone. */
+function weekOpenCount(w){
+  var n = 0, t = todayISO();
+  w.days.forEach(function(dp){
+    if(dp.wid === "rest" || dp.date >= t) return;
+    if(!sessionStatus(dp.date, dp.wid)) n++;
+  });
+  return n;
+}
+/* Every session marked "didn't do it", newest first — the honest list. */
+function missedList(){
+  var out = [];
+  S.plan.weeks.forEach(function(w){
+    w.days.forEach(function(dp){
+      if(dp.wid === "rest" || !sessionMissed(dp.date, dp.wid)) return;
+      var wk = workout(dp.wid) || BASE_WORKOUTS.rest;
+      out.push({ date:dp.date, weekNum:w.num, label:dp.label || wk.name, kind:wk.kind,
+                 reason:(S.days[dp.date].sessions[dp.wid].missReason || "") });
+    });
+  });
+  out.sort(function(a,b){ return a.date < b.date ? 1 : -1; });
+  return out;
+}
+function missReasonTally(){
+  var counts = {}, list = missedList(), i, r;
+  for(i=0;i<list.length;i++){
+    r = list[i].reason || "No reason given";
+    counts[r] = (counts[r]||0)+1;
+  }
+  return Object.keys(counts).map(function(k){ return {reason:k, n:counts[k]}; })
+    .sort(function(a,b){ return b.n - a.n; });
+}
+var MISS_REASONS = ["No time","Too tired","Unwell or sore","Away from home","Work ran over","Chose not to"];
 /* =========================================================================
    6. VIEW STATE + RENDER ENGINE
    ========================================================================= */
 var V = { tab:"today", date: todayISO(), sheet:null, weekId:null, editingWid:null, search:"", mealFilter:null };
 var toastTimer = null;
 
-function toast(msg){
+function toast(msg, actionLabel, onAction){
   var old = document.querySelector(".toast"); if(old) old.remove();
-  var t = h("div",{class:"toast",role:"status",text:msg});
+  var t = h("div",{class:"toast",role:"status"}, h("span",{text:msg}));
+  if(actionLabel && onAction)
+    t.appendChild(h("button",{class:"toast-act",onclick:function(){
+      t.remove(); onAction();
+    }, text:actionLabel}));
   document.body.appendChild(t);
   if(toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(function(){ t.remove(); }, 2600);
+  toastTimer = setTimeout(function(){ t.remove(); }, actionLabel ? 6000 : 2600);
 }
 function go(tab){ V.tab = tab; V.sheet = null; window.scrollTo(0,0); render(); }
 function openSheet(s){ V.sheet = s; render(); }
@@ -576,13 +642,13 @@ function dayStrip(){
   var strip = h("div",{class:"strip",role:"group","aria-label":"Days this week"});
   w.days.forEach(function(dp){
     var d = parseISO(dp.date), wk = workout(dp.wid);
-    var done = dp.wid !== "rest" && sessionDone(dp.date, dp.wid);
+    var st = dp.wid === "rest" ? "" : sessionStatus(dp.date, dp.wid);
     var has = dp.wid && dp.wid !== "rest";
     var b = h("button",{ "aria-pressed": dp.date===V.date ? "true":"false",
         onclick:function(){ V.date = dp.date; render(); } },
       h("span",{class:"d",text:DOW[d.getDay()].toUpperCase()}),
       h("span",{class:"n",text:String(d.getDate())}),
-      h("span",{class:"tag"+(done?" done":(has?" has":""))})
+      h("span",{class:"tag"+(st === "done" ? " done" : (st === "missed" ? " miss" : (has?" has":"")))})
     );
     if(dp.date === todayISO()) b.className = "today";
     strip.appendChild(b);
@@ -634,7 +700,8 @@ function sessionCard(){
     h("div",{class:"small muted",text:"This date is not in a week yet."}),
     h("button",{class:"btn sm red",style:"margin-top:8px",onclick:function(){ go("weeks"); }},"Add a week"));
   var wk = workout(dp.wid) || BASE_WORKOUTS.rest;
-  var done = sessionDone(V.date, dp.wid);
+  var status = sessionStatus(V.date, dp.wid);
+  var done = status === "done", missed = status === "missed";
   var card = h("section",{class:"card",style:"padding:0;overflow:hidden"});
   card.appendChild(h("div",{class:"band"}, "Today's session", h("span",{class:"spacer"}),
     h("span",{text: dp.when || (wk.kind==="rest" ? "Recovery" : "")})));
@@ -646,7 +713,8 @@ function sessionCard(){
       dp.target ? h("div",{class:"small muted",text:"Target "+dp.target}) : null,
       dp.sport ? h("div",{class:"small",text:"Sport: "+dp.sport}) : null,
       dp.note ? h("div",{class:"small muted",style:"margin-top:4px",text:dp.note}) : null
-    )
+    ),
+    status ? h("span",{class:"stat "+status,text: done ? "DONE" : "NOT DONE"}) : null
   ));
   if(wk.kind !== "rest"){
     var actions = h("div",{class:"row wrap",style:"margin-top:12px"});
@@ -654,13 +722,21 @@ function sessionCard(){
       openSheet({type:"session", date:V.date, wid:dp.wid});
     }}, wk.ex.length ? (done ? "Review log" : "Start workout") : (done ? "Review" : "Log it")));
     actions.appendChild(h("button",{class:"btn sm"+(done?" solid":""),onclick:function(){
-      toggleSessionDone(V.date, dp.wid);
+      var st = setSessionStatus(V.date, dp.wid, "done");
+      toast(st === "done" ? "Session marked done" : "No longer marked done");
+      render();
     }}, done ? "Done" : "Mark done"));
+    actions.appendChild(h("button",{class:"btn sm"+(missed?" warn":""),onclick:function(){
+      var st = setSessionStatus(V.date, dp.wid, "missed");
+      toast(st === "missed" ? "Logged as not done" : "Cleared");
+      render();
+    }}, missed ? "Not done" : "Didn't do it"));
     if(wk.kind === "strength")
       actions.appendChild(h("button",{class:"btn ghost sm",onclick:function(){
         openSheet({type:"session", date:V.date, wid:"circuit"});
       }},"Use 20-min circuit"));
     inner.appendChild(actions);
+    if(missed) inner.appendChild(missReasonPicker(V.date, dp.wid));
   } else {
     inner.appendChild(h("div",{class:"small muted",style:"margin-top:8px",
       text:"No formal workout. Shop, prep two meals and run your Sunday check-in."}));
@@ -671,12 +747,27 @@ function sessionCard(){
   card.appendChild(inner);
   return card;
 }
-function toggleSessionDone(date, wid){
-  var d = day(date);
-  if(!d.sessions[wid]) d.sessions[wid] = {done:false, log:{}, note:""};
-  d.sessions[wid].done = !d.sessions[wid].done;
-  touchDay(date);
-  render();
+/* Why it didn't happen. Optional — the mark stands on its own — but the
+   pattern across weeks is what actually tells you what to change. */
+function missReasonPicker(date, wid){
+  var sess = ensureSession(date, wid);
+  var box = h("div",{class:"missbox"});
+  box.appendChild(h("div",{class:"xs muted",style:"margin-bottom:6px",
+    text:"What got in the way? Optional, and it shows up on Progress."}));
+  var row = h("div",{class:"row wrap",style:"gap:6px"});
+  MISS_REASONS.forEach(function(r){
+    row.appendChild(h("button",{class:"chip","aria-pressed": sess.missReason === r ? "true":"false",
+      onclick:function(){
+        sess.missReason = sess.missReason === r ? "" : r;
+        touchDay(date); render();
+      }, text:r}));
+  });
+  box.appendChild(row);
+  box.appendChild(h("input",{class:"in",style:"margin-top:8px","data-fk":"miss-"+date+"-"+wid,
+    placeholder:"Or write your own", value: MISS_REASONS.indexOf(sess.missReason) < 0 ? (sess.missReason||"") : "",
+    oninput:function(e){ sess.missReason = e.target.value; },
+    onchange:function(){ touchDay(date); render(); }}));
+  return box;
 }
 function mealTimetable(){
   var card = h("section",{class:"card",style:"padding:0;overflow:hidden"});
@@ -754,6 +845,82 @@ function bodyCard(){
     text:"Weight moves day to day. Judge it on the weekly average on the Progress tab, not on one morning."}));
   return card;
 }
+/* Everything already logged on this date, in one place, all of it tappable.
+   Getting a number wrong is normal; hunting for where you put it is not. */
+function dayLogCard(){
+  var d = day(V.date), dp = dayPlan(V.date);
+  var card = h("section",{class:"card",style:"padding:0;overflow:hidden"});
+  card.appendChild(h("div",{class:"band"},"Logged on this day", h("span",{class:"spacer"}),
+    h("span",{text:"Tap anything to fix it"})));
+  var inner = h("div",{style:"padding:4px 14px 12px"});
+  var any = false;
+
+  MEALS.forEach(function(m){
+    var list = d.food.filter(function(e){ return e.meal === m.key; });
+    if(!list.length) return;
+    any = true;
+    inner.appendChild(h("div",{class:"eyebrow",style:"margin:10px 0 0",text:m.name}));
+    list.forEach(function(e){
+      inner.appendChild(h("button",{class:"check",style:"align-items:center",
+        onclick:function(){ openSheet({type:"editEntry", date:V.date, entryId:e.id}); }},
+        h("div",{class:"grow"},
+          h("div",{text:e.name}),
+          h("div",{class:"xs muted",text:unitLabel(e.unit, e.qty)+"  ·  "+n0(e.kcal)+" kcal  ·  "+n1(e.p)+"g protein"})),
+        h("span",{class:"link",text:"Edit"})
+      ));
+    });
+  });
+
+  var wids = Object.keys(d.sessions).filter(function(wid){
+    var s = d.sessions[wid];
+    return s.done || s.status === "missed" || s.note
+        || (s.log && Object.keys(s.log).length) || s.dist || s.dur;
+  });
+  if(wids.length){
+    any = true;
+    inner.appendChild(h("div",{class:"eyebrow",style:"margin:12px 0 0",text:"Training"}));
+    wids.forEach(function(wid){
+      var wk = workout(wid), st = sessionStatus(V.date, wid);
+      var sess = d.sessions[wid];
+      inner.appendChild(h("button",{class:"check",style:"align-items:center",
+        onclick:function(){ openSheet({type:"session", date:V.date, wid:wid}); }},
+        h("div",{class:"grow"},
+          h("div",{text: wk ? wk.name : wid}),
+          h("div",{class:"xs muted",text: st === "done" ? "Marked done"
+            : (st === "missed" ? ("Not done" + (sess.missReason ? " — "+sess.missReason : ""))
+                               : "Logged, not marked either way")})),
+        st ? h("span",{class:"stat "+st,text: st === "done" ? "DONE" : "NOT DONE"})
+           : h("span",{class:"link",text:"Open"})
+      ));
+    });
+  } else if(dp && dp.wid !== "rest"){
+    inner.appendChild(h("div",{class:"eyebrow",style:"margin:12px 0 0",text:"Training"}));
+    inner.appendChild(h("div",{class:"small muted",style:"padding:6px 0",
+      text:"Nothing recorded for "+(dp.label || "this session")+" yet."}));
+  }
+
+  if(d.weight != null || d.waist != null || d.steps != null){
+    any = true;
+    inner.appendChild(h("div",{class:"eyebrow",style:"margin:12px 0 0",text:"Body and movement"}));
+    inner.appendChild(h("div",{class:"small muted",style:"padding:4px 0",
+      text:[ d.weight != null ? n1(d.weight)+" kg" : null,
+             d.waist != null ? n1(d.waist)+" cm waist" : null,
+             d.steps != null ? n0(d.steps).toLocaleString()+" steps" : null
+           ].filter(Boolean).join("  ·  ")+"  — change them in the fields below."}));
+  }
+
+  if(!any)
+    inner.appendChild(h("div",{class:"small muted",style:"padding:10px 0",
+      text:"Nothing logged on this day yet. Whatever you add shows up here, and every line of it can be edited or deleted afterwards."}));
+
+  if(d.food.length)
+    inner.appendChild(h("button",{class:"btn sm ghost block",style:"margin-top:12px",onclick:function(){
+      openSheet({type:"clearDay", date:V.date});
+    }},"Clear the food log for this day"));
+
+  card.appendChild(inner);
+  return card;
+}
 function paintTotalsSoft(){ /* values commit on blur; the hero refreshes on next render */ }
 function numField(label, val, fk, onSet){
   var inp = h("input",{class:"in num",type:"number",inputmode:"decimal","data-fk":fk,
@@ -800,6 +967,7 @@ function screenToday(){
   wrap.appendChild(heroFuel());
   wrap.appendChild(quickLog());
   wrap.appendChild(mealTimetable());
+  wrap.appendChild(dayLogCard());
   wrap.appendChild(bodyCard());
   wrap.appendChild(weekBits());
   return wrap;
@@ -826,8 +994,17 @@ function addCustomEntry(date, meal, e){
   touchDay(date);
 }
 function removeEntry(date, entryId){
+  var d = day(date), removed = null, at = -1, i;
+  for(i=0;i<d.food.length;i++) if(d.food[i].id === entryId){ removed = d.food[i]; at = i; }
+  if(!removed) return null;
+  d.food.splice(at, 1);
+  touchDay(date);
+  return {entry:removed, at:at};
+}
+function restoreEntry(date, undo){
+  if(!undo) return;
   var d = day(date);
-  d.food = d.food.filter(function(e){ return e.id !== entryId; });
+  d.food.splice(Math.min(undo.at, d.food.length), 0, undo.entry);
   touchDay(date);
 }
 function findEntry(date, entryId){
@@ -930,6 +1107,7 @@ function buildSheet(s){
   if(s.type === "addFood")   return sheetAddFood(s);
   if(s.type === "foodDetail")return sheetFoodDetail(s);
   if(s.type === "editEntry") return sheetEditEntry(s);
+  if(s.type === "clearDay")  return sheetClearDay(s);
   if(s.type === "manual")    return sheetManual(s);
   if(s.type === "session")   return sheetSession(s);
   if(s.type === "editDay")   return sheetEditDay(s);
@@ -1057,12 +1235,23 @@ function sheetEditEntry(s){
   if(!e) return sheetShell("Entry", [h("div",{class:"small",text:"That entry is gone."})]);
   if(!s.draft) s.draft = {name:e.name, qty:e.qty, unit:e.unit, kcal:e.kcal, p:e.p, cb:e.cb, f:e.f, meal:e.meal};
   var draft = s.draft;
+  var src = e.foodId ? food(e.foodId) : null;
   var body = [];
-  body.push(mealChips(draft.meal, function(k){ draft.meal = k; e.meal = k; touchDay(s.date); render(); }));
+  body.push(h("div",{class:"xs muted",style:"margin-bottom:8px",
+    text:"Change anything here — the meal it belongs to, the amount or the numbers themselves. Nothing is locked once it is logged."}));
+  body.push(mealChips(draft.meal, function(k){ draft.meal = k; render(); }));
   body.push(h("div",{class:"fields two"},
     fld("Name", draft.name, "en-name", function(v){ draft.name = v; }, "text"),
-    fld("Amount", draft.qty, "en-qty", function(v){ draft.qty = parseFloat(v)||0; })
+    fld("Amount"+(draft.unit === "g" ? " (g)" : ""), draft.qty, "en-qty", function(v){ draft.qty = parseFloat(v)||0; })
   ));
+  if(src)
+    body.push(h("button",{class:"btn sm block",style:"margin-top:8px",onclick:function(){
+      if(!(draft.qty > 0)){ toast("Put in an amount first."); return; }
+      var m = macrosFor(src, draft.qty);
+      draft.kcal = m.kcal; draft.p = m.p; draft.cb = m.cb; draft.f = m.f;
+      toast("Recalculated for "+unitLabel(draft.unit, draft.qty));
+      render();
+    }},"Recalculate the numbers from the amount"));
   body.push(h("div",{class:"fields two",style:"margin-top:10px"},
     fld("Calories", draft.kcal, "en-kcal", function(v){ draft.kcal = parseFloat(v)||0; }),
     fld("Protein (g)", draft.p, "en-p", function(v){ draft.p = parseFloat(v)||0; })
@@ -1071,17 +1260,47 @@ function sheetEditEntry(s){
     fld("Carbs (g)", draft.cb, "en-cb", function(v){ draft.cb = parseFloat(v)||0; }),
     fld("Fat (g)", draft.f, "en-f", function(v){ draft.f = parseFloat(v)||0; })
   ));
+  body.push(h("div",{class:"card xs muted",style:"margin-top:10px"},
+    h("div",{}, h("strong",{text:"Logged "}),
+      new Date(e.at || now()).toLocaleString(), " · ", n0(e.kcal)+" kcal as it stands"),
+    h("div",{style:"margin-top:2px",
+      text: src ? "Reference: "+n0(src.kcal)+" kcal per "+(src.u === "g" ? "100g" : src.u)+"."
+                : "Entered by hand, so there is nothing to recalculate from."})));
   body.push(h("div",{class:"row",style:"gap:8px;margin-top:14px"},
     h("button",{class:"btn red grow",onclick:function(){
-      e.name = draft.name; e.qty = draft.qty; e.kcal = draft.kcal;
-      e.p = draft.p; e.cb = draft.cb; e.f = draft.f;
+      if(!draft.name.trim()){ toast("Give it a name."); return; }
+      e.name = draft.name.trim(); e.qty = draft.qty; e.kcal = draft.kcal;
+      e.p = draft.p; e.cb = draft.cb; e.f = draft.f; e.meal = draft.meal;
       touchDay(s.date); toast("Entry updated"); closeSheet();
     }},"Save changes"),
     h("button",{class:"btn ghost",onclick:function(){
-      removeEntry(s.date, s.entryId); toast("Entry deleted"); closeSheet();
+      var undo = removeEntry(s.date, s.entryId);
+      closeSheet();
+      toast("Entry deleted", "Undo", function(){ restoreEntry(s.date, undo); render(); });
     }},"Delete")
   ));
   return sheetShell("Edit entry", body, fmtShort(s.date));
+}
+/* For the day you logged someone else's dinner, or logged the same meal twice
+   over. One button, one undo, no going through six entries. */
+function sheetClearDay(s){
+  var d = day(s.date), t = dayTotals(s.date);
+  var body = [];
+  body.push(h("div",{class:"card small"},
+    h("div",{}, h("strong",{text:d.food.length+" food "+(d.food.length===1?"entry":"entries")+" on "+fmtDate(s.date)})),
+    h("div",{class:"xs muted",style:"margin-top:4px",
+      text:n0(t.kcal).toLocaleString()+" kcal and "+n0(t.p)+"g protein would be removed. Your training, weight, waist and steps for the day stay exactly as they are."})));
+  body.push(h("button",{class:"btn block red",style:"margin-top:14px",onclick:function(){
+    var backup = deep(d.food);
+    d.food = [];
+    touchDay(s.date);
+    closeSheet();
+    toast("Food log cleared", "Undo", function(){
+      day(s.date).food = backup; touchDay(s.date); render();
+    });
+  }},"Clear the food log"));
+  body.push(h("button",{class:"btn block ghost",style:"margin-top:8px",onclick:closeSheet},"Keep it"));
+  return sheetShell("Clear this day's food", body, fmtShort(s.date));
 }
 function fld(label, val, fk, onSet, type){
   return h("div",{}, h("label",{class:"f",text:label}),
@@ -1139,7 +1358,9 @@ function sheetManual(s){
    ========================================================================= */
 function ensureSession(date, wid){
   var d = day(date);
-  if(!d.sessions[wid]) d.sessions[wid] = {done:false, note:"", log:{}, dur:null};
+  if(!d.sessions[wid]) d.sessions[wid] = {done:false, status:"", missReason:"", note:"", log:{}, dur:null};
+  if(d.sessions[wid].status === undefined) d.sessions[wid].status = d.sessions[wid].done ? "done" : "";
+  if(d.sessions[wid].missReason === undefined) d.sessions[wid].missReason = "";
   return d.sessions[wid];
 }
 function lastSession(wid, beforeDate){
@@ -1167,6 +1388,7 @@ function screenTrain(){
     text:"Main lifts 3 sets. Progress by cleaner reps and small increases, not by chasing fatigue."}));
 
   var strengthDone = weekSessionCount(w), cardioDone = weekCardioCount(w);
+  var missedThis = weekMissedCount(w), openThis = weekOpenCount(w);
   var stat = h("section",{class:"card",style:"padding:0;overflow:hidden"});
   stat.appendChild(h("div",{class:"band"},"This week"));
   var g = h("div",{class:"metergrid"});
@@ -1175,6 +1397,13 @@ function screenTrain(){
   g.appendChild(h("div",{class:"metercell"}, h("div",{class:"v num",text:String(cardioDone)}),
     h("div",{class:"l",text:"Run, walk or sport logged"})));
   stat.appendChild(g);
+  var g2 = h("div",{class:"metergrid"});
+  g2.appendChild(h("div",{class:"metercell"},
+    h("div",{class:"v num",style: missedThis ? "color:var(--warn)":"", text:String(missedThis)}),
+    h("div",{class:"l",text:"Marked not done"})));
+  g2.appendChild(h("div",{class:"metercell"}, h("div",{class:"v num",text:String(openThis)}),
+    h("div",{class:"l",text:"Past days still unanswered"})));
+  stat.appendChild(g2);
   wrap.appendChild(stat);
 
   var card = h("section",{class:"card",style:"padding:0;overflow:hidden"});
@@ -1182,8 +1411,12 @@ function screenTrain(){
   var inner = h("div",{style:"padding:4px 14px 12px"});
   w.days.forEach(function(dp){
     var wk = workout(dp.wid) || BASE_WORKOUTS.rest;
-    var done = dp.wid !== "rest" && sessionDone(dp.date, dp.wid);
+    var st = dp.wid === "rest" ? "" : sessionStatus(dp.date, dp.wid);
+    var sess = (S.days[dp.date] && S.days[dp.date].sessions && S.days[dp.date].sessions[dp.wid]) || null;
     var d = parseISO(dp.date);
+    var sub = (dp.target ? dp.target : (wk.kind==="rest"?"Recovery and meal prep":"")) +
+      (dp.when ? " · "+dp.when : "");
+    if(st === "missed" && sess && sess.missReason) sub = "Not done — "+sess.missReason;
     inner.appendChild(h("button",{class:"check",style:"align-items:center",onclick:function(){
       if(wk.kind === "rest"){ V.date = dp.date; go("today"); return; }
       openSheet({type:"session", date:dp.date, wid:dp.wid});
@@ -1192,11 +1425,10 @@ function screenTrain(){
         h("div",{class:"xs muted",text:DOW[d.getDay()].toUpperCase()}),
         h("div",{style:"font-family:var(--display);font-size:18px;line-height:1",text:String(d.getDate())})),
       h("div",{class:"grow"},
-        h("div",{class: done ? "strike":"", text:dp.label || wk.name}),
-        h("div",{class:"xs muted",text: (dp.target ? dp.target : (wk.kind==="rest"?"Recovery and meal prep":"")) +
-          (dp.when ? " · "+dp.when : "")})),
-      done ? h("span",{class:"xs",style:"color:var(--good);font-weight:700",text:"DONE"})
-           : (wk.kind === "rest" ? null : svg(ICONS.fwd,{size:15,w:2.4}))
+        h("div",{class: st === "done" ? "strike":"", text:dp.label || wk.name}),
+        h("div",{class:"xs muted",text:sub})),
+      st ? h("span",{class:"stat "+st,text: st === "done" ? "DONE" : "NOT DONE"})
+         : (wk.kind === "rest" ? null : svg(ICONS.fwd,{size:15,w:2.4}))
     ));
   });
   card.appendChild(inner);
@@ -1295,13 +1527,23 @@ function sheetSession(s){
       value:sess.note, oninput:function(e){ sess.note = e.target.value; },
       onchange:function(){ touchDay(s.date); }})));
 
+  var missed = sessionStatus(s.date, s.wid) === "missed";
   body.push(h("div",{class:"row",style:"gap:8px;margin-top:14px"},
     h("button",{class:"btn grow "+(sess.done ? "solid":"red"),onclick:function(){
-      sess.done = !sess.done; touchDay(s.date);
-      toast(sess.done ? "Session logged" : "Marked not done");
-      if(sess.done) closeSheet(); else render();
-    }}, sess.done ? "Done — tap to undo" : "Mark session done")
+      var st = setSessionStatus(s.date, s.wid, "done");
+      toast(st === "done" ? "Session logged" : "No longer marked done");
+      if(st === "done") closeSheet(); else render();
+    }}, sess.done ? "Done — tap to undo" : "Mark session done"),
+    h("button",{class:"btn grow"+(missed ? " warn":""),onclick:function(){
+      var st = setSessionStatus(s.date, s.wid, "missed");
+      toast(st === "missed" ? "Logged as not done" : "Cleared");
+      render();
+    }}, missed ? "Not done — tap to undo" : "I didn't do this one")
   ));
+  if(missed) body.push(missReasonPicker(s.date, s.wid));
+  if(!sess.done && !missed)
+    body.push(h("div",{class:"card xs muted",style:"margin-top:10px",
+      text:"Answering either way is what makes the Progress tab honest. A session left unanswered counts as neither."}));
   if(wk.kind === "strength")
     body.push(h("div",{class:"card xs muted",style:"margin-top:10px",
       text:"Short on time? A 20-minute circuit counts. Never restart the week over one missed session."}));
@@ -1607,6 +1849,90 @@ function weekAvgWeight(w){
   });
   return n ? Math.round(sum/n*10)/10 : null;
 }
+/* Sessions kept against sessions dropped, and the reasons behind the drops.
+   This is the part of the record that is easy to avoid looking at. */
+function consistencyCard(){
+  var doneN = 0, missN = 0, openN = 0, t = todayISO();
+  S.plan.weeks.forEach(function(w){
+    w.days.forEach(function(dp){
+      if(dp.wid === "rest") return;
+      var st = sessionStatus(dp.date, dp.wid);
+      if(st === "done") doneN++;
+      else if(st === "missed") missN++;
+      else if(dp.date < t) openN++;
+    });
+  });
+  var answered = doneN + missN;
+  var rate = answered ? Math.round(doneN/answered*100) : null;
+
+  var wrap = h("div",{});
+  wrap.appendChild(h("div",{class:"h2",text:"Sessions kept and missed"}));
+  var card = h("section",{class:"card",style:"padding:0;overflow:hidden"});
+  card.appendChild(h("div",{class:"band"},"All weeks so far", h("span",{class:"spacer"}),
+    h("span",{text: rate == null ? "Nothing answered yet" : rate+"% of answered sessions done"})));
+  var g = h("div",{class:"metergrid"});
+  g.appendChild(h("div",{class:"metercell"},
+    h("div",{class:"v num",style:"color:var(--good)",text:String(doneN)}),
+    h("div",{class:"l",text:"Done"})));
+  g.appendChild(h("div",{class:"metercell"},
+    h("div",{class:"v num",style: missN ? "color:var(--warn)":"", text:String(missN)}),
+    h("div",{class:"l",text:"Marked not done"})));
+  card.appendChild(g);
+  var g2 = h("div",{class:"metergrid"});
+  g2.appendChild(h("div",{class:"metercell"}, h("div",{class:"v num",text:String(openN)}),
+    h("div",{class:"l",text:"Past days unanswered"})));
+  g2.appendChild(h("div",{class:"metercell"},
+    h("div",{class:"v num",text: rate == null ? "—" : rate+"%"}),
+    h("div",{class:"l",text:"Kept, of the ones you answered"})));
+  card.appendChild(g2);
+  wrap.appendChild(card);
+
+  var tally = missReasonTally();
+  if(tally.length){
+    var rc = h("section",{class:"card",style:"padding:2px 12px"});
+    rc.appendChild(h("div",{class:"eyebrow",style:"margin:10px 0 0",text:"What gets in the way"}));
+    var top = tally[0].n;
+    tally.forEach(function(r){
+      rc.appendChild(h("div",{class:"listrow",style:"align-items:center"},
+        h("div",{class:"grow"}, h("div",{class:"small",text:r.reason}),
+          h("div",{style:"margin-top:5px"}, barEl(r.n/top))),
+        h("div",{class:"num",style:"font-family:var(--display);font-size:20px",text:String(r.n)})));
+    });
+    wrap.appendChild(rc);
+  }
+
+  var list = missedList();
+  if(list.length){
+    var mc = h("section",{class:"card",style:"padding:0;overflow:hidden"});
+    mc.appendChild(h("div",{class:"band"},"Every session you marked not done",
+      h("span",{class:"spacer"}), h("span",{text:"Tap to change your mind"})));
+    var inner = h("div",{style:"padding:4px 14px 12px"});
+    list.slice(0,12).forEach(function(m){
+      inner.appendChild(h("button",{class:"check",style:"align-items:center",onclick:function(){
+        V.date = m.date; go("today");
+      }},
+        h("div",{class:"grow"},
+          h("div",{text:m.label}),
+          h("div",{class:"xs muted",text:"Week "+m.weekNum+" · "+fmtDate(m.date)+
+            (m.reason ? " · "+m.reason : " · no reason given")})),
+        h("span",{class:"stat missed",text:"NOT DONE"})
+      ));
+    });
+    if(list.length > 12)
+      inner.appendChild(h("div",{class:"xs muted",style:"margin-top:8px",
+        text:"Showing the most recent 12 of "+list.length+"."}));
+    mc.appendChild(inner);
+    wrap.appendChild(mc);
+  } else {
+    wrap.appendChild(h("div",{class:"card small muted",
+      text:"Nothing marked as not done yet. When you skip a session, say so on the Today tab — the pattern in the reasons is worth more than the count."}));
+  }
+
+  if(openN)
+    wrap.appendChild(h("div",{class:"card xs muted",style:"margin-top:10px",
+      text:openN+" planned "+(openN===1?"session has":"sessions have")+" gone by without an answer either way. They count as neither kept nor missed, so the figures above only cover what you have actually answered."}));
+  return wrap;
+}
 function screenProgress(){
   var wrap = h("div",{});
   wrap.appendChild(h("h1",{class:"h1",style:"margin-top:16px",text:"Progress"}));
@@ -1624,12 +1950,14 @@ function screenProgress(){
   wrap.appendChild(h("div",{class:"card"}, barChart(seriesFor("p",14),
     {min:S.plan.settings.proMin, max:S.plan.settings.proMax}, "protein")));
 
+  wrap.appendChild(consistencyCard());
+
   wrap.appendChild(h("div",{class:"h2",text:"Week by week"}));
   var sc = h("div",{class:"scroller"});
   var tb = h("table",{});
   tb.appendChild(h("thead",{}, h("tr",{},
     h("th",{},"Week"), h("th",{},"Dates"), h("th",{},"Avg wt"), h("th",{},"Waist"),
-    h("th",{},"Strength"), h("th",{},"Cardio"), h("th",{},"Takeaway"), h("th",{},"Prep"))));
+    h("th",{},"Strength"), h("th",{},"Cardio"), h("th",{},"Missed"), h("th",{},"Takeaway"), h("th",{},"Prep"))));
   var tbody = h("tbody",{});
   S.plan.weeks.forEach(function(w){
     var waist = null;
@@ -1642,6 +1970,8 @@ function screenProgress(){
       h("td",{class:"num"}, waist == null ? "—" : n1(waist)),
       h("td",{class:"num"}, weekSessionCount(w)+" / 3"),
       h("td",{class:"num"}, String(weekCardioCount(w))),
+      h("td",{class:"num", style: weekMissedCount(w) ? "color:var(--warn);font-weight:700" : ""},
+        String(weekMissedCount(w))),
       h("td",{class:"num"}, String(w.takeaways||0)),
       h("td",{}, w.mealPrepDone ? "Yes" : "No")
     ));
@@ -1660,9 +1990,11 @@ function sheetCheckin(s){
   for(i=0;i<S.plan.weeks.length;i++) if(S.plan.weeks[i].id === s.weekId) w = S.plan.weeks[i];
   if(!w) return sheetShell("Check-in", [h("div",{class:"small",text:"That week is gone."})]);
   var body = [], avg = weekAvgWeight(w);
+  var missedW = weekMissedCount(w), openW = weekOpenCount(w);
   var rows = [
     ["Strength sessions", weekSessionCount(w)+" of 3", weekSessionCount(w) >= 2],
     ["Run, walk or sport", String(weekCardioCount(w)), weekCardioCount(w) >= 1],
+    ["Sessions marked not done", String(missedW), missedW === 0],
     ["Planned takeaways", String(w.takeaways||0)+" of 1", (w.takeaways||0) <= 1],
     ["Two meals prepped", w.mealPrepDone ? "Done" : "Not yet", !!w.mealPrepDone],
     ["Average weight", avg == null ? "Not logged" : n1(avg)+" kg", avg != null]
@@ -1674,6 +2006,22 @@ function sheetCheckin(s){
       h("div",{class:"xs num muted",text:r[1]})));
   });
   body.push(card);
+  if(missedW){
+    var mlist = h("div",{class:"card",style:"padding:2px 12px;margin-top:10px"});
+    mlist.appendChild(h("div",{class:"eyebrow",style:"margin:10px 0 0",text:"What you didn't do this week"}));
+    w.days.forEach(function(dp){
+      if(dp.wid === "rest" || !sessionMissed(dp.date, dp.wid)) return;
+      var wk = workout(dp.wid) || BASE_WORKOUTS.rest;
+      var reason = S.days[dp.date].sessions[dp.wid].missReason;
+      mlist.appendChild(h("div",{class:"listrow"},
+        h("div",{class:"grow"}, h("div",{class:"small",text:dp.label || wk.name}),
+          h("div",{class:"xs muted",text:fmtDate(dp.date)+(reason ? " · "+reason : " · no reason given")}))));
+    });
+    body.push(mlist);
+  }
+  if(openW)
+    body.push(h("div",{class:"card xs muted",style:"margin-top:10px",
+      text:openW+" planned "+(openW===1?"session":"sessions")+" from this week went by unanswered. Mark them done or not done on the Train tab so the week reads true."}));
   body.push(h("div",{style:"margin-top:10px"}, h("label",{class:"f",text:"Notes for the week"}),
     h("textarea",{class:"in","data-fk":"ci-note",rows:"3",
       placeholder:"Energy, soreness, sleep. Is next Wednesday worship or sport?",

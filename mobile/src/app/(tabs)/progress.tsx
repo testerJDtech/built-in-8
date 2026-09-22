@@ -9,6 +9,7 @@ export default function ProgressScreen() {
         'Weight and waist lines, judged on the weekly average rather than one morning',
         'Calories and protein per day against your range',
         'Sessions completed per week',
+        'Sessions you marked not done, with the reasons you gave, so the pattern is visible',
         'Charts drawn with react-native-svg, ported from the web line and bar charts',
       ]}
     />

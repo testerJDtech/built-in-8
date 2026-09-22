@@ -5,6 +5,7 @@ import type {
   DayPlan,
   FoodEntry,
   MealKey,
+  SessionStatus,
   Store,
   Totals,
   Unit,
@@ -44,6 +45,22 @@ export function dayPlan(s: Store, date: string): DayPlan | null {
 
 export function sessionDone(s: Store, date: string, wid: string): boolean {
   return !!s.days[date]?.sessions?.[wid]?.done;
+}
+
+/** Marked "I didn't do this one", as opposed to never answered. */
+export function sessionMissed(s: Store, date: string, wid: string): boolean {
+  const sess = s.days[date]?.sessions?.[wid];
+  return !!sess && !sess.done && sess.status === 'missed';
+}
+
+export function sessionStatus(s: Store, date: string, wid: string): SessionStatus {
+  if (sessionDone(s, date, wid)) return 'done';
+  if (sessionMissed(s, date, wid)) return 'missed';
+  return '';
+}
+
+export function weekMissedCount(s: Store, w: Week): number {
+  return w.days.filter((dp) => dp.wid !== 'rest' && sessionMissed(s, dp.date, dp.wid)).length;
 }
 
 export function weekSessionCount(

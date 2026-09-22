@@ -99,6 +99,7 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
 .strip .tag{width:5px;height:5px;border-radius:50%;background:transparent}
 .strip .tag.has{background:var(--red)}
 .strip .tag.done{background:var(--good)}
+.strip .tag.miss{background:var(--warn)}
 .strip button[aria-pressed="true"]{background:var(--band);border-color:var(--band);color:var(--onband)}
 .strip button[aria-pressed="true"] .d{color:var(--onband);opacity:.75}
 .strip button.today{border-color:var(--red);border-width:2px}
@@ -109,6 +110,7 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
 .btn.red{background:var(--red);border-color:var(--red);color:var(--onred)}
 .btn.solid{background:var(--ink);color:var(--bg)}
 .btn.ghost{border-color:var(--line);color:var(--ink2)}
+.btn.warn{background:var(--warn);border-color:var(--warn);color:var(--onred)}
 .btn.sm{padding:6px 10px;font-size:13px}
 .btn.block{width:100%}
 .btn:disabled{opacity:.45;cursor:not-allowed}
@@ -117,6 +119,12 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
 .chip[aria-pressed="true"]{background:var(--red);color:var(--onred);border-color:var(--red)}
 .chip.ghost{border-style:dashed;color:var(--ink2)}
 .link{background:none;border:0;padding:0;color:var(--red);font-weight:600;font-size:13px;cursor:pointer;text-decoration:underline}
+/* done / not-done badge */
+.stat{flex:none;font-size:11px;font-weight:700;letter-spacing:.03em;padding:3px 7px;border-radius:3px;white-space:nowrap}
+.stat.done{color:var(--good);border:1px solid var(--good)}
+.stat.missed{color:var(--warn);border:1px solid var(--warn)}
+/* the "what got in the way" panel under a missed session */
+.missbox{margin-top:12px;padding:10px 12px;border-left:4px solid var(--warn);background:var(--surface)}
 
 /* ---- inputs ---- */
 label.f{display:block;font-size:12px;font-weight:600;color:var(--ink2);margin:0 0 4px}
@@ -165,7 +173,10 @@ tr:nth-child(even) td{background:var(--surface2)}
 
 /* ---- toast ---- */
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(76px + env(safe-area-inset-bottom,0px));
-  background:var(--band);color:var(--onband);padding:9px 14px;border-radius:3px;font-size:13px;font-weight:600;z-index:70;max-width:90vw}
+  background:var(--band);color:var(--onband);padding:9px 14px;border-radius:3px;font-size:13px;font-weight:600;z-index:70;max-width:90vw;
+  display:flex;align-items:center;gap:14px}
+.toast-act{background:none;border:0;color:var(--onband);font:inherit;text-decoration:underline;
+  cursor:pointer;padding:0;flex:none}
 
 /* ---- charts ---- */
 .chart{width:100%;height:auto;display:block;overflow:visible}
